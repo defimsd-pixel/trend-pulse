@@ -1,0 +1,38 @@
+{
+	order rate_limit before respond
+}
+
+{$TP_DOMAIN} {
+	# 60 requêtes par minute et par adresse IP
+	rate_limit {
+		zone per_ip {
+			key {remote_host}
+			events 60
+			window 1m
+		}
+	}
+
+	# /health : seule route sans jeton
+	handle /health {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		@no_token not header Authorization "Bearer {$TP_TOKEN}"
+		respond @no_token 401
+
+		# Lecture seule : aucune écriture ni collecte déclenchée depuis l'extérieur
+		@not_get not method GET
+		respond @not_get 405
+		@save query save=true
+		respond @save 403
+
+		reverse_proxy api:8000 {
+			# CORS fermé : aucun navigateur n'appelle cette API
+			header_down -Access-Control-Allow-Origin
+			header_down -Access-Control-Allow-Credentials
+			header_down -Access-Control-Allow-Methods
+			header_down -Access-Control-Allow-Headers
+		}
+	}
+}
