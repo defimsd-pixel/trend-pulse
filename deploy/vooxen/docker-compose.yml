@@ -1,0 +1,49 @@
+# VOOXEN — Trend Pulse : api (FastAPI) + worker (collecte quotidienne) + caddy (HTTPS, jeton, débit).
+# Pas de dashboard Streamlit. Aucune clé ANTHROPIC ni Cloudflare n'est transmise.
+services:
+  api:
+    build: { context: ../.., dockerfile: deploy/vooxen/Dockerfile }
+    image: vooxen/trend-pulse:d8e5fdb
+    ports: ["127.0.0.1:8000:8000"]
+    environment: &tp_env
+      TP_GEO: ${TP_GEO:-FR}
+      TP_SOURCES: ${TP_SOURCES:-google_trends,google_news,wikipedia,reddit}
+      TP_SUBREDDITS: ${TP_SUBREDDITS:-france+vosfinances+entrepreneur_fr}
+    volumes: ["${TP_DATA_DIR:-./data}:/app/data"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  worker:
+    image: vooxen/trend-pulse:d8e5fdb
+    command: ["python", "/app/vooxen_worker.py"]
+    environment:
+      <<: *tp_env
+      TP_SNAPSHOT_TIME: ${TP_SNAPSHOT_TIME:-07:00}
+      TP_SNAPSHOT_ON_START: "1"
+    volumes:
+      - "${TP_DATA_DIR:-./data}:/app/data"
+      - "${TP_BACKUP_DIR:-./backups}:/app/backups"
+    depends_on: [api]
+    restart: unless-stopped
+
+  caddy:
+    build: { context: ., dockerfile: Dockerfile.caddy }
+    image: vooxen/caddy-ratelimit:2
+    ports: ["80:80", "443:443"]
+    environment:
+      TP_DOMAIN: ${TP_DOMAIN:-trends.vooxen.fr}
+      TP_TOKEN: ${TP_TOKEN:?TP_TOKEN manquant dans .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [api]
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
